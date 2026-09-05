@@ -1,3 +1,5 @@
+[🇷🇺 Русский](README.ru.md)
+
 # Fast Port Scanner
 
 High-speed TCP port scanner for IPv4 addresses and CIDR networks.
