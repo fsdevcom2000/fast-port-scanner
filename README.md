@@ -31,7 +31,7 @@ Available options:
 ```text
 -i, --input        Input file with IPv4 addresses/CIDR
 -p, --port         TCP port to scan
--o, --output       Output file (default: result.txt)
+-o, --output       Output file (default: results.txt)
 -t, --timeout      Connection timeout in ms (default: 500)
 -c, --concurrency  Maximum concurrent connections (default: 2000)
 -h, --help         Show this help
