@@ -602,7 +602,7 @@ void PrintHelp()
     Console.WriteLine();
     Console.WriteLine("Usage:");
     Console.WriteLine(
-        "  fast-port-scanner.exe --input ip.txt --port 80");
+        "  fps.exe --input ip.txt --port 80");
     Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine(
