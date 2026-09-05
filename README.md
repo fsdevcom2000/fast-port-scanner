@@ -1,4 +1,4 @@
-[🇷🇺 Русский](README.ru.md)
+[🇷🇺 Русский](README.rus.md)
 
 # Fast Port Scanner
 
