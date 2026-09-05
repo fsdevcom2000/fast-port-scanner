@@ -1,4 +1,6 @@
-<img width="500" height="392" alt="risovach com(1)" src="https://github.com/user-attachments/assets/1d154340-f419-4fe1-af4a-5c1639a8de39" />
+<p align="center">
+  <img width="500" height="392" alt="meme" src="https://github.com/user-attachments/assets/1d154340-f419-4fe1-af4a-5c1639a8de39" />
+</p>
 
 ---
 
