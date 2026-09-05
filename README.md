@@ -97,4 +97,5 @@ Actual scan time depends heavily on network conditions, latency, filtering and t
 
 ## License
 
-MIT License.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
