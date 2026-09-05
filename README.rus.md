@@ -1,3 +1,4 @@
+[English](README.md)
 
 # Fast Port Scanner
 
