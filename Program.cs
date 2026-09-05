@@ -22,8 +22,9 @@ try
     if (!File.Exists(options.InputFile))
         throw new FileNotFoundException($"Input file '{options.InputFile}' was not found.");
 
-    // Pre-increase the minimum number of ThreadPool worker threads.
-    // This reduces latency when starting a large number of operations abruptly.
+    // Without this, Parallel.ForEachAsync will struggle to ramp up threads quickly,
+    // since ThreadPool adds only 1 thread per second by default.
+    // Bump the minimum upfront to match our concurrency level.
     ThreadPool.SetMinThreads(options.Concurrency, options.Concurrency);
 
     Console.WriteLine();
@@ -96,7 +97,7 @@ try
     }
     catch (OperationCanceledException)
     {
-        // Ctrl+C - normal scan termination.
+        // Ctrl+C — normal shutdown, nothing to handle here.
     }
 
     stopwatch.Stop();
@@ -136,11 +137,6 @@ finally
     Console.ReadKey(true);
 }
 
-
-// ============================================================
-// TCP scanner
-// ============================================================
-
 async Task<bool> IsPortOpenAsync(
     uint target,
     int port,
@@ -152,6 +148,8 @@ async Task<bool> IsPortOpenAsync(
         SocketType.Stream,
         ProtocolType.Tcp);
 
+    // Without this, sockets may hang in TIME_WAIT under high concurrency,
+    // quickly exhausting available ports.
     socket.LingerState = new LingerOption(true, 0);
 
     try
@@ -163,12 +161,14 @@ async Task<bool> IsPortOpenAsync(
             port,
             ct);
 
-        // Successful connection completed synchronously.
+        // Fast path: if the connection already completed synchronously,
+        // skip the extra WaitAsync overhead.
         if (connectTask.IsCompletedSuccessfully)
             return true;
 
-        // WaitAsync limits the connection wait time.
-        // On TimeoutException the socket will be disposed via using.
+        // Wait for connection with timeout.
+        // On timeout, the socket will be disposed via using,
+        // preventing any lingering half-open connections.
         await connectTask.AsTask().WaitAsync(
             TimeSpan.FromMilliseconds(timeout),
             ct);
@@ -177,30 +177,24 @@ async Task<bool> IsPortOpenAsync(
     }
     catch (OperationCanceledException) when (ct.IsCancellationRequested)
     {
-        // Cancel the entire scan on Ctrl+C.
+        // Rethrow to stop the entire scan.
         throw;
     }
     catch (TimeoutException)
     {
-        // TCP connection did not establish within timeout.
         return false;
     }
     catch (SocketException)
     {
-        // Connection refused, unreachable, reset, etc.
         return false;
     }
     catch (ObjectDisposedException)
     {
-        // Socket was closed during cancellation/timeout.
+        // Can happen if the socket was closed due to timeout/cancellation
+        // while we were handling another exception.
         return false;
     }
 }
-
-
-// ============================================================
-// Progress
-// ============================================================
 
 async Task ShowProgressAsync(
     int total,
@@ -221,6 +215,9 @@ async Task ShowProgressAsync(
 
     int animationIndex = 0;
 
+    // Update progress every 300ms.
+    // Use CancellationToken.None for Delay so the progress bar
+    // gets one final update even on cancellation.
     while (!cancellationToken.IsCancellationRequested)
     {
         int completed = getCompleted();
@@ -263,13 +260,10 @@ async Task ShowProgressAsync(
     }
 }
 
-
-// ============================================================
-// Target loading
-// ============================================================
-
 List<uint> LoadTargets(string file)
 {
+    // Use HashSet to deduplicate — especially important when expanding
+    // large CIDR ranges that may overlap.
     HashSet<uint> targets = new();
 
     foreach (string rawLine in File.ReadLines(file))
@@ -279,8 +273,8 @@ List<uint> LoadTargets(string file)
         if (string.IsNullOrWhiteSpace(line))
             continue;
 
-        // Support for comments:
-        // 192.168.1.1 # router
+        // Support inline comments via # — handy for annotations like
+        // "192.168.1.1 # main gateway"
         int commentIndex = line.IndexOf('#');
 
         if (commentIndex >= 0)
@@ -313,11 +307,6 @@ List<uint> LoadTargets(string file)
 
     return targets.ToList();
 }
-
-
-// ============================================================
-// CIDR expansion
-// ============================================================
 
 void AddCidr(
     string value,
@@ -362,6 +351,8 @@ void AddCidr(
     ulong count =
         1UL << (32 - prefixLength);
 
+    // Guard against accidentally expanding to /0 or other huge ranges
+    // that would blow up memory.
     if (count > MaxTargets ||
         (ulong)targets.Count + count > MaxTargets)
     {
@@ -376,11 +367,6 @@ void AddCidr(
     }
 }
 
-
-// ============================================================
-// Validation
-// ============================================================
-
 void CheckTargetLimit(int count)
 {
     if (count > MaxTargets)
@@ -389,11 +375,6 @@ void CheckTargetLimit(int count)
             $"Target list exceeds maximum limit of {MaxTargets:N0} addresses.");
     }
 }
-
-
-// ============================================================
-// Result saving
-// ============================================================
 
 async Task SaveResultsAsync(
     string file,
@@ -407,6 +388,8 @@ async Task SaveResultsAsync(
         FileAccess.Write,
         FileShare.Read);
 
+    // Explicitly omit BOM to avoid compatibility issues
+    // with older tools and scripts.
     await using StreamWriter writer = new(
         stream,
         new UTF8Encoding(false));
@@ -417,11 +400,6 @@ async Task SaveResultsAsync(
             UInt32ToIPAddressFast(target).ToString());
     }
 }
-
-
-// ============================================================
-// IP conversion
-// ============================================================
 
 uint IPAddressToUInt32(IPAddress address)
 {
@@ -437,28 +415,28 @@ uint IPAddressToUInt32(IPAddress address)
 
 IPAddress UInt32ToIPAddressFast(uint value)
 {
+    // On little-endian systems (x86/x64), IPAddress constructor
+    // expects bytes in network order. Without this reversal,
+    // we'd get the wrong address.
     return new IPAddress(
         BitConverter.IsLittleEndian
             ? BinaryPrimitives.ReverseEndianness(value)
             : value);
 }
 
-
-// ============================================================
-// Command line
-// ============================================================
-
 Options ParseArguments(string[] args)
 {
     if (args.Length == 0)
-{
-    Environment.ExitCode = 1;
-
-    return new Options
     {
-        ShowHelp = true
-    };
-}
+        PrintHelp();
+
+        Environment.ExitCode = 1;
+
+        return new Options
+        {
+            ShowHelp = true
+        };
+    }
 
     string? input = null;
     string? output = null;
@@ -580,7 +558,6 @@ Options ParseArguments(string[] args)
     };
 }
 
-
 string GetValue(
     string[] args,
     ref int index,
@@ -603,7 +580,6 @@ string GetValue(
     return value;
 }
 
-
 int ParseInt(
     string value,
     string option)
@@ -619,11 +595,6 @@ int ParseInt(
     return result;
 }
 
-
-// ============================================================
-// Help
-// ============================================================
-
 void PrintHelp()
 {
     Console.WriteLine();
@@ -631,7 +602,7 @@ void PrintHelp()
     Console.WriteLine();
     Console.WriteLine("Usage:");
     Console.WriteLine(
-        "  fps.exe --input ip.txt --port 80");
+        "  fast-port-scanner.exe --input ip.txt --port 80");
     Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine(
@@ -651,11 +622,6 @@ void PrintHelp()
         $"Maximum targets: {MaxTargets:N0}");
     Console.WriteLine();
 }
-
-
-// ============================================================
-// Options
-// ============================================================
 
 sealed class Options
 {
